@@ -1,0 +1,13 @@
+{
+  "model_id": "Qwen/Qwen2.5-7B-Instruct",
+  "dataset": "WritingPrompts (Fan et al., 2018), test split",
+  "n_prompts": 100,
+  "n_samples": 5,
+  "seed": 42,
+  "temperature": 1.0,
+  "top_p": 0.9,
+  "max_new_tokens": 1280,
+  "repetition_penalty": 1.0,
+  "system_prompt": "You are a creative writer contributing to an online short story forum.",
+  "user_template": "Write a short story based on the following writing prompt.\n\nPrompt: {prompt}\n\nWrite approximately 500 words. Output only the story, with no title, no preamble, and no commentary."
+}
