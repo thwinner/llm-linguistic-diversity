@@ -1,0 +1,29 @@
+{
+  "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "dataset": "Par3 (Karpinska et al., 2022), pooled German/Russian/Chinese source books",
+  "pool_languages": [
+    "German",
+    "Russian",
+    "Chinese"
+  ],
+  "min_sentences": 10,
+  "min_translators": 3,
+  "n_paragraphs_pooled": 891,
+  "n_paragraphs": 200,
+  "sample_quota_by_language": {
+    "Chinese": 67,
+    "German": 67,
+    "Russian": 66
+  },
+  "n_samples": 5,
+  "seed": 42,
+  "temperature": 1.0,
+  "top_p": 0.9,
+  "max_new_tokens": 3072,
+  "max_model_len": 8192,
+  "src_max_tokens": 3072,
+  "repetition_penalty": 1.0,
+  "system_prompt": "You are a professional literary translator contributing English translations to an anthology of world literature.",
+  "user_template": "Translate the following {source_lang} passage into English.\n\nText: {source_text}\n\nPreserve the meaning, tone, and structure of the original as closely as possible. Output only the English translation, with no title, no preamble, and no commentary.",
+  "note": "Paragraphs pooled across German/Russian/Chinese source books, filtered to indices where >= min_translators different human translators simultaneously reach >= min_sentences sentences (see data_description/descriptive_analysis_par3.ipynb), then stratified-sampled down to n_paragraphs, split as evenly as possible across the three source languages (sample_quota_by_language) so the much larger Russian pool does not swamp German. French is structurally excluded (no French book has >= min_translators translators)."
+}
