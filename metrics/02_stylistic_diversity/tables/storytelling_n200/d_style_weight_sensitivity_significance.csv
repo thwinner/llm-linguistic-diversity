@@ -1,0 +1,11 @@
+,w=0.3,w=0.5,w=0.7
+human vs llama,True,False,True
+human vs mistral,True,True,True
+human vs qwen,True,False,True
+human vs gemma,True,False,True
+llama vs mistral,False,True,True
+llama vs qwen,False,False,False
+llama vs gemma,False,False,False
+mistral vs qwen,True,True,True
+mistral vs gemma,False,True,True
+qwen vs gemma,False,False,False

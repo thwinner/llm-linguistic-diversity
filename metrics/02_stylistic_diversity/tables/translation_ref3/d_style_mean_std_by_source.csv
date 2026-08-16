@@ -1,0 +1,6 @@
+source,mean,std
+human,0.6725,0.1949
+llama,0.4022,0.163
+mistral,0.371,0.1742
+qwen,0.385,0.1755
+gemma,0.3504,0.1718

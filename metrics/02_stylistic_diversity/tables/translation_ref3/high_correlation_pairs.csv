@@ -1,0 +1,6 @@
+feature_1,feature_2,spearman_r
+sent_len_mean,sent_len_var,0.7827761009926243
+sent_len_mean,flesch_reading_ease,-0.6515306204329203
+sent_len_mean,comma_density,0.8202851602116598
+sent_len_var,comma_density,0.6686322817870861
+flesch_reading_ease,mean_syllables,-0.8111072984169477
