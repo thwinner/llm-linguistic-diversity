@@ -1,0 +1,5 @@
+model,overlap_3d,overlap_4d,delta
+llama,0.0,0.0,0.0
+mistral,0.005,0.005,0.0
+qwen,0.005,0.0,-0.005
+gemma,0.0,0.0,0.0

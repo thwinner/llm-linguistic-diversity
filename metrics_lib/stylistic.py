@@ -15,6 +15,10 @@ Call stylistic_diversity() once with every group you want scored, not group by g
     from metrics_lib.stylistic import stylistic_diversity
     d_style = stylistic_diversity({"prompt_0": texts_0, "prompt_1": texts_1, ...})
 
+    # for a weighting-sensitivity analysis (recombining with weights other than 0.5/0.5):
+    d_style, scalar_norm, fw_norm = stylistic_diversity(texts_by_group, return_components=True)
+    d_style_w03 = {gid: 0.3 * scalar_norm[gid] + 0.7 * fw_norm[gid] for gid in scalar_norm}
+
 The default scalar feature set (DEFAULT_SCALAR_FEATURES) drops 3 features
 (flesch_reading_ease, comma_density, mean_para_length) found redundant
 (|Spearman r| > 0.6 with another feature) on the original storytelling corpus. 
@@ -59,9 +63,9 @@ DEFAULT_SCALAR_FEATURES = [f for f in ALL_SCALAR_FEATURES if f not in REDUNDANT_
 def _ensure_nltk_resources():
     import nltk
 
-    # NLTK Punkt tokenizer and stopwords
-    nltk.download('punkt', quiet=True)
-    nltk.download('punkt_tab', quiet=True)
+    # NLTK is only used as the function-word (stopword) list; sentence/word
+    # tokenization below uses spaCy throughout, for consistency with the
+    # spaCy-based POS features (adj_adv_ratio, sent_start_pron_ratio).
     nltk.download('stopwords', quiet=True)
     return True
 
@@ -109,9 +113,8 @@ def count_syllables(word: str) -> int:
 def extract_style_features(text: str, min_sentences: int = MIN_SENTENCES, nlp=None, function_words=None):
     """11-feature stylistic vector for one text or None if too short (< min_sentences)"""
 
-    # Ensure NLTK resources are downloaded
+    # Ensure NLTK stopwords are downloaded (used as the function-word list)
     _ensure_nltk_resources()
-    from nltk.tokenize import sent_tokenize, word_tokenize
     import textstat
 
     # Ensure spaCy NLP pipeline and function words are available
@@ -120,16 +123,19 @@ def extract_style_features(text: str, min_sentences: int = MIN_SENTENCES, nlp=No
         raise RuntimeError("extract_style_features requires spaCy (en_core_web_sm) to be installed")
     function_words = function_words if function_words is not None else get_function_words()
 
-    # Tokenize sentences and words
-    sentences = sent_tokenize(text)
-    sentences = [s.strip() for s in sentences if len(s.strip()) > 0]
+    # Tokenize sentences and words via spaCy, so every sentence- and word-level
+    # feature below shares the same tokenization (previously sentence length,
+    # dialogue/punctuation ratios etc. used NLTK's Punkt tokenizer while the
+    # pronoun-start feature used spaCy's, i.e. two different sentence counts).
+    doc = nlp(text)
+    sentences = [s for s in doc.sents if len(s.text.strip()) > 0]
 
     # Check if the text has enough sentences to compute stylistic features
     if len(sentences) < min_sentences:
         return None
 
     # Tokenize words and filter to alphabetic words for stylistic analysis
-    words = word_tokenize(text)
+    words = [t.text for t in doc]
     words_alpha = [w.lower() for w in words if w.isalpha()]
 
     # If there are no alphabetic words, return None to avoid division by zero
@@ -141,7 +147,7 @@ def extract_style_features(text: str, min_sentences: int = MIN_SENTENCES, nlp=No
     fw_dist = fw_counts / (fw_counts.sum() + 1e-9)
 
     # Feature 2 & 3: sentence length mean & variance (in words)
-    sent_lengths = [len(word_tokenize(s)) for s in sentences]
+    sent_lengths = [len(s) for s in sentences]
     sent_len_mean = np.mean(sent_lengths)
     sent_len_var = np.var(sent_lengths)
 
@@ -152,7 +158,6 @@ def extract_style_features(text: str, min_sentences: int = MIN_SENTENCES, nlp=No
     comma_density = text.count(',') / len(sentences)
 
     # Feature 6: (adjective + adverb) to content-word ratio via spaCy
-    doc = nlp(text)
     content_pos = {'NOUN', 'VERB', 'ADJ', 'ADV', 'PROPN'}
     adj_adv_pos = {'ADJ', 'ADV'}
 
@@ -173,12 +178,11 @@ def extract_style_features(text: str, min_sentences: int = MIN_SENTENCES, nlp=No
 
     # Feature 10: mean paragraph length (words per paragraph)
     paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 0] or [text]
-    mean_para_length = np.mean([len(word_tokenize(p)) for p in paragraphs])
+    mean_para_length = np.mean([len(nlp.tokenizer(p)) for p in paragraphs])
 
-    # Feature 11: sentence-initial pronoun ratio (via spaCy sentence segmentation)
-    spacy_sents = list(doc.sents)
-    pron_starts = sum(1 for s in spacy_sents if len(s) > 0 and s[0].pos_ == 'PRON')
-    sent_start_pron_ratio = pron_starts / (len(spacy_sents) + 1e-9)
+    # Feature 11: sentence-initial pronoun ratio
+    pron_starts = sum(1 for s in sentences if len(s) > 0 and s[0].pos_ == 'PRON')
+    sent_start_pron_ratio = pron_starts / (len(sentences) + 1e-9)
 
     return {
         'fw_dist': fw_dist,
@@ -267,11 +271,15 @@ def _winsorized_minmax(values, k=1.5):
 
 
 def stylistic_diversity(texts_by_group, scalar_features=DEFAULT_SCALAR_FEATURES,
-                         min_sentences=MIN_SENTENCES, winsorize_k=1.5, nlp=None):
+                         min_sentences=MIN_SENTENCES, winsorize_k=1.5, nlp=None,
+                         return_components=False):
     """D_style per group, normalized across the whole batch of groups
 
     texts_by_group: dict[group_id, list[str]] (e.g. {prompt_id: [generations]})
-    Returns dict[group_id, float]
+    Returns dict[group_id, float].
+    If return_components=True, instead returns (d_style, scalar_norm, fw_norm) -- three
+    dict[group_id, float], for e.g. a weighting-sensitivity analysis that recombines
+    scalar_norm/fw_norm with weights other than the default 0.5/0.5.
     Texts shorter than min_sentences are dropped before computing a group's raw components.
     """
 
@@ -296,4 +304,10 @@ def stylistic_diversity(texts_by_group, scalar_features=DEFAULT_SCALAR_FEATURES,
     # Combine the normalized components into the final D_style score (0.5/0.5 weighting)
     d_style = 0.5 * scalar_norm + 0.5 * fw_norm
 
-    return {gid: float(d) for gid, d in zip(group_ids, d_style)}
+    d_style_dict = {gid: float(d) for gid, d in zip(group_ids, d_style)}
+    if not return_components:
+        return d_style_dict
+
+    scalar_norm_dict = {gid: float(s) for gid, s in zip(group_ids, scalar_norm)}
+    fw_norm_dict = {gid: float(f) for gid, f in zip(group_ids, fw_norm)}
+    return d_style_dict, scalar_norm_dict, fw_norm_dict

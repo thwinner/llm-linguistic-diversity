@@ -1,0 +1,6 @@
+source,prompts,texts,dropped,min_per_prompt,groups_lt2
+human,200,1883,0,5,0
+llama,200,996,4,2,0
+mistral,200,985,15,4,0
+qwen,200,992,8,4,0
+gemma,200,1000,0,5,0
