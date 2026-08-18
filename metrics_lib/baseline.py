@@ -1,12 +1,12 @@
 """
-Baseline single-text metrics: lexical Diversity, GPT-2 Perplexity/Coherence,
-and the combined Q*Text score.
+Baseline single-text metrics: lexical Diversity, OPT-2.7B Perplexity/Coherence and the combined Q*Text score.
 
 - Definitions from Garces Arias et al., 2025: Towards Better Open-Ended Text
 Generation: A Multicriteria Evaluation Framework (GEM^2 2025)
-- GPT-2-large is used as a fixed external scorer for Perplexity/Coherence (the paper uses
-OPT-2.7B for Coherence)
-- Q*Text reuses the paper's fitted parameters (Table 21) rather than refitting them
+- OPT-2.7B is used as a fixed external scorer for both Perplexity and Coherence,
+matching the paper's own Coherence scorer (the paper itself uses two different
+scorers per metric -> here one shared scorer covers both for simplicity)
+- Q*Text reuses the paper's fitted parameter
 
     from metrics_lib.baseline import diversity_score, compute_perplexity, compute_coherence, compute_qstar
     div = diversity_score(text)
@@ -19,10 +19,10 @@ from functools import lru_cache
 
 import numpy as np
 
-DEFAULT_MODEL_NAME = 'gpt2-large'
+DEFAULT_MODEL_NAME = 'facebook/opt-2.7b'
 DEFAULT_MAX_TOKENS = 256
 
-# Fitted hyperparameters from Garces Arias et al. (2025), Table 21
+# Fitted hyperparameters from Garces Arias et al. (2025)
 # Order in each tuple: (Perplexity, Coherence, Diversity)
 Q_STAR_PARAMS = {
     'w':     (0.586, 0.834, 3.853),   # weight: how much each metric contributes to the final score
@@ -57,7 +57,7 @@ def diversity_score(text, n_range=(2, 3, 4)):
     return score
 
 
-# Shared GPT-2 scorer for Perplexity and Coherence
+# Shared scorer for Perplexity and Coherence
 # Cached to avoid reloading the model/tokenizer
 @lru_cache(maxsize=None)
 def _load_scorer(model_name=DEFAULT_MODEL_NAME, device=None):
@@ -68,15 +68,21 @@ def _load_scorer(model_name=DEFAULT_MODEL_NAME, device=None):
     if device is None:
         device = 'mps' if torch.backends.mps.is_available() else 'cpu'
 
+    # float16 on GPU/MPS to keep a multi-billion-parameter model's memory footprint manageable
+    # CPU falls back to float32 since fp16 matmul kernels are unsupported/slow there
+    dtype = torch.float16 if device != 'cpu' else torch.float32
+
     # Load tokenizer and model, move model to device and set to eval mode
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype).to(device)
     model.eval()
+
     return tokenizer, model, device
 
 
 def compute_perplexity(text, model_name=DEFAULT_MODEL_NAME, max_tokens=DEFAULT_MAX_TOKENS):
-    """Perplexity of `text` alone (no prompt context) under GPT-2-large. NaN if too short."""
+    """Perplexity of `text` alone (no prompt context) under the scorer model. NaN if too short."""
+
     # Load the scorer (tokenizer and model) using the cached function
     import torch
     tokenizer, model, device = _load_scorer(model_name)
@@ -91,17 +97,23 @@ def compute_perplexity(text, model_name=DEFAULT_MODEL_NAME, max_tokens=DEFAULT_M
     # Compute the loss (negative log-likelihood) of the input text under the model and exponentiate to get perplexity
     with torch.no_grad():
         loss = model(input_ids, labels=input_ids).loss
+
     return float(torch.exp(loss).cpu())
 
 
 def compute_coherence(prompt, text, model_name=DEFAULT_MODEL_NAME, max_tokens=DEFAULT_MAX_TOKENS):
-    """Mean log-probability of `text`'s tokens conditioned on `prompt`, under GPT-2-large."""
+    """Mean log-probability of `text`'s tokens conditioned on `prompt`, under the scorer model."""
+
     import torch
     tokenizer, model, device = _load_scorer(model_name)
 
-    # Tokenize the prompt and continuation, ensuring they fit within the max token limit and move to appropriate device
+    # Tokenize the prompt and continuation, ensuring they fit within the max token limit and move to appropriate device.
+    # add_special_tokens=False on the continuation: some tokenizers (e.g. OPT's, which prepends
+    # </s> as BOS) would otherwise insert a spurious special token right at the prompt/continuation
+    # boundary once concatenated below.
     prompt_ids = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=max_tokens)['input_ids']
-    cont_ids = tokenizer(text, return_tensors='pt', truncation=True, max_length=max_tokens)['input_ids']
+    cont_ids = tokenizer(text, return_tensors='pt', truncation=True, max_length=max_tokens,
+                          add_special_tokens=False)['input_ids']
 
     # If the continuation is too short to compute coherence, return NaN
     if cont_ids.shape[1] < 1:
@@ -109,12 +121,16 @@ def compute_coherence(prompt, text, model_name=DEFAULT_MODEL_NAME, max_tokens=DE
 
     # Concatenate prompt and continuation token IDs
     input_ids = torch.cat([prompt_ids, cont_ids], dim=1)
+
     #  Determine the length of the prompt
     prompt_len = prompt_ids.shape[1]
 
-    # If the combined input exceeds the model's context limit, truncate the oldest tokens from the beginning
-    ctx_limit = model.config.n_positions
+    # If the combined input exceeds the model's context limit, truncate the oldest tokens from the beginning.
+    # Context-window field differs by architecture (GPT-2: n_positions, OPT/most others: max_position_embeddings)
+    ctx_limit = getattr(model.config, 'n_positions', None) or model.config.max_position_embeddings
+
     if input_ids.shape[1] > ctx_limit:
+        # Truncate the oldest tokens from the beginning to fit within the context limit
         overflow = input_ids.shape[1] - ctx_limit
         input_ids = input_ids[:, overflow:]
         prompt_len = max(prompt_len - overflow, 0)
@@ -125,6 +141,7 @@ def compute_coherence(prompt, text, model_name=DEFAULT_MODEL_NAME, max_tokens=DE
     # Compute the log-probabilities of the continuation tokens conditioned on the prompt
     with torch.no_grad():
         logits = model(input_ids).logits
+
     log_probs = torch.log_softmax(logits[:, :-1, :], dim=-1)
     targets = input_ids[:, 1:]
     token_log_probs = log_probs.gather(2, targets.unsqueeze(-1)).squeeze(-1)
@@ -132,8 +149,11 @@ def compute_coherence(prompt, text, model_name=DEFAULT_MODEL_NAME, max_tokens=DE
     # Compute the mean log-probability of the continuation tokens, starting from the end of the prompt
     cont_start = max(prompt_len - 1, 0)
     cont_log_probs = token_log_probs[:, cont_start:]
+
+    # Return NaN if the continuation has no tokens
     if cont_log_probs.shape[1] == 0:
         return np.nan
+    
     return float(cont_log_probs.mean().cpu())
 
 
@@ -148,7 +168,7 @@ def compute_qstar(perplexity, coherence, diversity, params=Q_STAR_PARAMS):
 
     perplexity/coherence/diversity must be array-likes covering the full set
     of texts you want compared against each other (they're min-max
-    normalized against each other's min/max) --> not single scalars.
+    normalized against each other's min/max) -> not single scalars.
     """
     perplexity = np.asarray(perplexity, dtype=float)
     coherence = np.asarray(coherence, dtype=float)

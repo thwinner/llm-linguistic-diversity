@@ -3,7 +3,7 @@ Narrative diversity (D_narr): sentiment-arc divergence across a group of texts
 
 Per text: split into ARC_LENGTH equal-proportion narrative segments, average
 per-sentence sentiment within each segment -> one sentiment arc vector per
-text. 
+text
 D_narr for a group = mean pairwise Euclidean distance between arc
 vectors (Reagan et al., 2016).
 
@@ -26,7 +26,7 @@ MIN_SENTENCES = 10  # must be >= ARC_LENGTH so every bin gets >= 1 sentence
 
 
 def _sent_tokenize(text):
-    """Tokenize text into sentences, using NLTK's Punkt tokenizer."""
+    """Tokenize text into sentences using NLTK's Punkt tokenizer"""
     import nltk
 
     nltk.download('punkt', quiet=True)
@@ -112,18 +112,18 @@ def mean_pairwise_l2(arcs):
 
 
 def position_wise_diversity(arcs):
-    """Mean pairwise squared difference at each narrative position, shape (arc_length,).
+    """Mean pairwise squared difference at each narrative position, shape (arc_length,)
 
-    sum_t D(t) == mean_pairwise_l2(arcs) ** 2 (per-position decomposition of D_narr).
+    sum_t D(t) == mean_pairwise_l2(arcs) ** 2 (per-position decomposition of D_narr)
     """
     arcs_arr = np.array(arcs)
 
+    # Filter out arcs that are None (e.g. too short to produce a full arc)
     if len(arcs_arr) < 2:
         return None
 
     # Compute all pairwise squared differences at each position and return the mean
     diffs_sq = np.array([(arcs_arr[i] - arcs_arr[j]) ** 2 for i, j in combinations(range(len(arcs_arr)), 2)])
-
     return diffs_sq.mean(axis=0)
 
 
@@ -131,15 +131,17 @@ def narrative_diversity(texts, method: str = 'transformer', arc_length: int = AR
                          min_sentences: int = MIN_SENTENCES, min_valid_texts: int = 2):
     """D_narr for one group of texts (e.g. multiple generations for one prompt).
 
-    Texts shorter than min_sentences are dropped; raises ValueError if fewer
-    than min_valid_texts remain (the original analysis used min_valid_texts=5
-    out of 10 generations per prompt).
+    Texts shorter than min_sentences are dropped
+    Raises ValueError if fewer than min_valid_texts remain
     """
 
     # Compute sentiment arcs for each text, filtering out short texts
     arcs = [get_sentiment_arc(t, method=method, arc_length=arc_length, min_sentences=min_sentences) for t in texts]
     arcs = [a for a in arcs if a is not None]
+
+    # Check if there are enough valid texts to compute D_narr
     if len(arcs) < min_valid_texts:
         raise ValueError(f"Only {len(arcs)} valid text(s) (need >= {min_valid_texts}) after filtering short texts")
-    
+
+    # Compute mean pairwise Euclidean distance between arcs
     return mean_pairwise_l2(arcs)

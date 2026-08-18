@@ -1,13 +1,20 @@
 """
 Discourse diversity (D_disc): entity-grid-based diversity metric
 
-Full entity-grid model from Barzilay & Lapata (2008): 
-sentences -> per-entity grammatical roles (Subject / Object / Other / Absent) 
--> weighted bigram + trigram role-transition profiles 
--> mean pairwise Jensen-Shannon divergence across a group of texts (e.g. multiple generations for the same prompt).
+Two variants of the entity-grid model from Barzilay & Lapata (2008):
 
-    from metrics_lib.discourse import discourse_diversity
+- discourse_diversity(): full variant -> per-entity grammatical roles
+  (Subject / Object / Other / Absent), salience-weighted, weighted bigram +
+  trigram role-transition profiles
+- discourse_diversity_simple(): simplified variant -> binary presence/absence
+  per entity (no roles, no salience weighting), single set of four transition types.
+
+Both reduce to a mean pairwise Jensen-Shannon divergence across a group of texts
+(e.g. multiple generations for the same prompt)
+
+    from metrics_lib.discourse import discourse_diversity, discourse_diversity_simple
     d_disc = discourse_diversity(list_of_texts_for_one_prompt)
+    d_disc_simple = discourse_diversity_simple(list_of_texts_for_one_prompt)
 """
 import re
 from collections import Counter
@@ -30,12 +37,21 @@ TRIGRAM_TRANSITIONS = [(r1, r2, r3) for r1 in ROLES for r2 in ROLES for r3 in RO
 N_BIGRAM = len(BIGRAM_TRANSITIONS)    # 16
 N_TRIGRAM = len(TRIGRAM_TRANSITIONS)  # 64
 
-MIN_ENTITY_FREQ = 2  # entity must appear in >= this many sentences to count
+# Entity must appear in >= this many sentences to count 
+# (detailed analysis of entity filtre in metrics/01_discourse_diversity/discourse_diversity.ipynb)
+MIN_ENTITY_FREQ = 2  
 
 # Grammatical dependency labels for subjects and objects (spaCy)
 _SUBJ_DEPS = {"nsubj", "nsubjpass", "csubj", "csubjpass"}
 _OBJ_DEPS = {"dobj", "iobj", "pobj", "attr", "oprd", "dative"}
 _VALID_NER = {"PERSON", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART", "FAC", "NORP"}
+
+# Narrower NER set used by the simplified (binary) entity grid (no FAC, NORP)
+_VALID_NER_SIMPLE = {"PERSON", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART"}
+
+# All possible presence/absence transitions (for the simplified variant's profile vector)
+BINARY_TRANSITIONS = [(a, b) for a in (0, 1) for b in (0, 1)]
+N_BINARY = len(BINARY_TRANSITIONS)  # == 4
 
 
 
@@ -48,39 +64,47 @@ def sent_tokenize(text, nlp=None):
 
 
 def _get_role_for_token(token):
-    """Grammatical role of a token via its own or its head's dependency label."""
-    if token.dep_ in _SUBJ_DEPS:
-        return ROLE_S
-    if token.dep_ in _OBJ_DEPS:
-        return ROLE_O
-    if token.head != token:
-        if token.head.dep_ in _SUBJ_DEPS:
+    """Grammatical role of a token, walking up the dependency chain to the
+    governing subject/object (so coordinated/appositive entities, e.g. "Phil
+    and Steve" in "...to his sons, Phil and Steve", resolve to the same role)."""
+
+    node = token
+    while True:
+        if node.dep_ in _SUBJ_DEPS:
             return ROLE_S
-        if token.head.dep_ in _OBJ_DEPS:
+        if node.dep_ in _OBJ_DEPS:
             return ROLE_O
-    return ROLE_X
+        if node.head == node:
+            return ROLE_X
+        node = node.head
 
 
 def extract_entity_roles_spacy(sent_doc):
-    """{entity_name: role} for one spaCy-parsed sentence. Ties broken S > O > X."""
+    """{entity_name: role} for one spaCy-parsed sentence. Ties broken S > O > X """
+
     entity_roles = {}
     role_priority = {ROLE_S: 3, ROLE_O: 2, ROLE_X: 1}
 
     # Use spaCy's named entity recognition to find entities and assign roles based on grammatical dependencies
     for ent in sent_doc.ents:
+
         # Ignore entities that are not of the valid types (PERSON, ORG, GPE, etc.)
         if ent.label_ not in _VALID_NER:
             continue
 
-        # Normalize entity name to lowercase and strip whitespace; skip if too short
+        # Normalize entity name to lowercase and strip whitespace
         name = ent.text.lower().strip()
+
+        # Skip entities that are too short
         if len(name) < 2:
             continue
 
-        # Determine the role of the entity based on its tokens and their dependencies, prioritizing Subject > Object > Other
+        # Determine the role of the entity based on its tokens and their dependencies prioritizing Subject > Object > Other
         role = ROLE_X
         for token in ent:
             token_role = _get_role_for_token(token)
+
+            # Update the role if the new token's role has higher priority (S > O > X)
             if role_priority.get(token_role, 0) > role_priority.get(role, 0):
                 role = token_role
 
@@ -94,7 +118,7 @@ def extract_entity_roles_spacy(sent_doc):
 
 
 def build_entity_grid(text, nlp=None):
-    """Entity grid for one text.
+    """Entity grid for one text
 
     Returns (grid, sents, entity_freq):
       grid: {entity_name: [role_sent1, role_sent2, ...]}, role in {S, O, X, -}
@@ -147,6 +171,7 @@ def compute_transition_profile(text, use_trigrams=True, nlp=None):
     
     Returns (bigram_profile, trigram_profile_or_None, grid, sents, entity_freq)
     """
+
     # Use spaCy to build the entity grid and extract sentences and entity frequencies
     grid, sents, entity_freq = build_entity_grid(text, nlp=nlp)
 
@@ -187,8 +212,87 @@ def compute_transition_profile(text, use_trigrams=True, nlp=None):
     return bigram_profile, trigram_profile, grid, sents, entity_freq
 
 
+def extract_entities_simple(sent_doc):
+    """Set of discourse entity names present in one spaCy-parsed sentence (no roles)"""
+
+    entities = set()
+
+    # Use spaCy's named entity recognition to find entities, ignoring grammatical role
+    for ent in sent_doc.ents:
+        if ent.label_ not in _VALID_NER_SIMPLE:
+            continue
+
+        # Normalize entity name to lowercase and strip whitespace; skip if too short
+        name = ent.text.lower().strip()
+        if len(name) < 2:
+            continue
+
+        entities.add(name)
+
+    return entities
+
+
+def build_binary_grid(text, nlp=None):
+    """Binary presence/absence entity grid for one text.
+
+    Returns (grid, sents):
+      grid: {entity_name: [0/1, 0/1, ...]}, presence per sentence
+      sents: list of sentences
+    """
+
+    # Use spaCy to sentence-tokenize and extract entities present in each sentence
+    nlp = nlp if nlp is not None else get_spacy_nlp()
+    sents = sent_tokenize(text, nlp=nlp)
+
+    # If there are fewer than 2 sentences, return empty structures since we can't compute transitions
+    if len(sents) < 2:
+        return {}, sents
+
+    # Use spaCy's nlp.pipe to efficiently process all sentences in batches and extract entities for each sentence
+    docs = list(nlp.pipe(sents, batch_size=50))
+    sent_entities = [extract_entities_simple(doc) for doc in docs]
+
+    # Collect all unique entities across sentences to build the grid
+    all_entities = set()
+    for ents in sent_entities:
+        all_entities.update(ents)
+    if not all_entities:
+        return {}, sents
+
+    # For each entity, create a binary presence/absence sequence across sentences
+    grid = {
+        entity: [1 if entity in ents else 0 for ents in sent_entities]
+        for entity in all_entities
+    }
+
+    return grid, sents
+
+
+def compute_binary_transition_profile(text, nlp=None):
+    """Presence/absence transition profile (4 bins: 00, 01, 10, 11) for one text.
+    Entities are weighted equally, with no salience weighting or frequency filtering
+    """
+    # Use spaCy to build the binary entity grid and extract sentences
+    grid, sents = build_binary_grid(text, nlp=nlp)
+
+    # If there are no entities or fewer than 2 sentences, return a uniform distribution
+    if not grid or len(sents) < 2:
+        return np.ones(N_BINARY) / N_BINARY
+
+    # Compute presence/absence transition counts across all entities
+    counts = Counter()
+    for presence in grid.values():
+        for k in range(len(presence) - 1):
+            counts[(presence[k], presence[k + 1])] += 1
+
+    # Normalize the counts to create a probability profile over the 4 transition types
+    total = sum(counts.values()) or 1
+    return np.array([counts[t] / total for t in BINARY_TRANSITIONS])
+
+
 def jsd(p, q):
     """Jensen-Shannon divergence (symmetric, in [0, ln2])."""
+
     # Add a small constant to avoid division by zero
     p = np.asarray(p, dtype=float) + 1e-10
     q = np.asarray(q, dtype=float) + 1e-10
@@ -225,10 +329,29 @@ def discourse_diversity(texts, use_trigrams=True, alpha_trigram=0.3, nlp=None):
     jsd_bi = np.mean([jsd(profiles_bi[i], profiles_bi[j]) for i, j in pairs])
 
     # If trigrams are being used and trigram profiles were successfully computed, compute the mean pairwise JSD 
-    # for trigram profiles and combine it with the bigram JSD using the specified alpha_trigram weight.
+    # for trigram profiles and combine it with the bigram JSD using the specified alpha_trigram weight
     if use_trigrams and profiles_tri:
         profiles_tri = np.array(profiles_tri)
         jsd_tri = np.mean([jsd(profiles_tri[i], profiles_tri[j]) for i, j in pairs])
         return float((1 - alpha_trigram) * jsd_bi + alpha_trigram * jsd_tri)
 
     return float(jsd_bi)
+
+
+def discourse_diversity_simple(texts, nlp=None):
+    """D_disc (simplified) for one group of texts: mean pairwise JSD of binary
+    presence/absence transition profiles.
+
+    Entities are weighted equally, without frequency filtering or grammatical roles
+    """
+    # At least 2 texts are required to compute pairwise diversity
+    if len(texts) < 2:
+        raise ValueError("discourse_diversity_simple requires at least 2 texts")
+
+    # Compute the binary transition profile for each text in the group, using spaCy for NLP processing
+    nlp = nlp if nlp is not None else get_spacy_nlp()
+    profiles = np.array([compute_binary_transition_profile(t, nlp=nlp) for t in texts])
+
+    # Compute the mean pairwise Jensen-Shannon divergence (JSD) across all pairs of texts
+    pairs = list(combinations(range(len(texts)), 2))
+    return float(np.mean([jsd(profiles[i], profiles[j]) for i, j in pairs]))
