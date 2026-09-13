@@ -22,11 +22,13 @@ The datasets used in this project are not included in the repository due to lice
 
 The expected directory structure is:
 
+```text
 data/
 ├── human_drift/
 ├── liteval_corpus/
 ├── LITEVAL-CORPUS/
 ├── par3/
 └── hanna_stories_annotations.csv
+```
 
-Generated model outputs are stored locally in `data_generation/generations/` and are not distributed with this repository. 
+Generated model outputs are stored locally in `data_generation/generations/` and are not distributed with this repository.
