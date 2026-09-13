@@ -31,4 +31,25 @@ data/
 └── hanna_stories_annotations.csv
 ```
 
-Generated model outputs are stored locally in `data_generation/generations/` and are not distributed with this repository.
+## Data Generation
+
+The generation pipeline is organized as follows:
+
+```text
+data_generation/
+├── generations/
+│   ├── storytelling_n200/
+│   ├── translation_ref3/
+│   └── translation_ref4/
+├── par3_generation.ipynb
+└── writingprompts_generation.ipynb
+```text
+
+The notebooks in `data_generation/` contain the generation pipelines for the translation and storytelling experiments.
+
+- `par3_generation.ipynb` is used to generate translations for the PAR3 experiments.  
+- `writingprompts_generation.ipynb` is used to generate stories for the WritingPrompts experiments.  
+- `storytelling_n200/` contains the generated stories used in the storytelling experiments.
+- `translation_ref3/` and `translation_ref4/` contain the generated translations for the corresponding translation settings.
+
+The generated outputs in `data_generation/generations/` are not included in the repository because some files also contain material from the original datasets.
