@@ -43,7 +43,7 @@ data_generation/
 │   └── translation_ref4/
 ├── par3_generation.ipynb
 └── writingprompts_generation.ipynb
-```text
+```
 
 The notebooks in `data_generation/` contain the generation pipelines for the translation and storytelling experiments.
 
