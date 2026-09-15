@@ -1,5 +1,13 @@
-# Masterthesis
+# Linguistic Diversity in LLM Outputs: A Multidimensional Evaluation Framework
 
+## Setup
+
+Install the dependencies and the local `metrics_lib` package (editable, so changes in `metrics/metrics_lib/` and `common/` take effect immediately):
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
 
 ## Data
 
