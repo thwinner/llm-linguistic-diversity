@@ -1,0 +1,4 @@
+MIN_SENTENCES,ARC_LENGTH,valid_texts,valid_groups,mean_D_narr[human],mean_D_narr[llama],mean_D_narr[mistral],mean_D_narr[qwen],mean_D_narr[gemma]
+8,10,4372,972,2.7397,2.0867,1.9967,1.9994,1.931
+10,10,4252,955,2.7289,2.0818,1.9919,2.0001,1.9241
+15,10,2506,574,2.3827,1.9586,1.944,1.8118,1.8594
