@@ -1,0 +1,7 @@
+dimension,domain,source_mean_rank_rho,max_source_rank_shift
+Semantic,storytelling_n200,0.8999999999999998,1.0
+Semantic,translation_ref3,0.9999999999999999,0.0
+Lexical,storytelling_n200,0.9999999999999999,0.0
+Lexical,translation_ref3,0.9999999999999999,0.0
+Syntactic,storytelling_n200,0.8999999999999998,1.0
+Syntactic,translation_ref3,0.9999999999999999,0.0

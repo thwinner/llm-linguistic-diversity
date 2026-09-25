@@ -1,0 +1,30 @@
+{
+  "domains": [
+    "storytelling_n200",
+    "translation_ref3"
+  ],
+  "n_prompts": 200,
+  "sources": [
+    "human",
+    "llama",
+    "mistral",
+    "qwen",
+    "gemma"
+  ],
+  "data_fingerprint": "604589b7079e3999",
+  "minilm_model": "all-MiniLM-L6-v2",
+  "minilm_requested_revision": null,
+  "minilm_resolved_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+  "minilm_max_seq_length": 256,
+  "nomic_model": "nomic-ai/nomic-embed-text-v1.5",
+  "nomic_prefix": "clustering: ",
+  "nomic_requested_revision": null,
+  "nomic_resolved_revision": "e9b6763023c676ca8431644204f50c2b100d9aab",
+  "nomic_max_seq_length": 2048,
+  "minilm_device": "mps",
+  "nomic_device": "cpu",
+  "minilm_batch_size": 64,
+  "nomic_batch_size": 4,
+  "spacy_model": "en_core_web_sm",
+  "spacy_version": "3.8.13"
+}
