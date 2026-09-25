@@ -10,3 +10,7 @@ __pycache__/
 
 # Generated texts
 /data_generation/generations/
+
+
+# Latex files
+/Masterthesis_Latex/
