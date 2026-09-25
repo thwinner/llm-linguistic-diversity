@@ -9,13 +9,13 @@ This repository investigates linguistic diversity in repeatedly sampled LLM outp
 | Metric | Dimension | Representation | Distance |
 |---|---|---|---|
 | `D_sem` | semantic | Nomic Embed Text v1.5 embeddings | cosine |
-| `D_lex` | lexical | word unigrams | Jaccard |
+| `D_lex` | lexical | Word unigrams | Jaccard |
 | `D_syn` | syntactic | POS-tag bigrams | Jaccard |
-| `D_disc` | discourse | entity grids | Jensen–Shannon |
+| `D_disc` | discourse | Entity grids | Jensen–Shannon |
 | `D_narr` | narrative | 10-segment sentiment arcs | Euclidean |
-| `D_style` | stylistic | stylometric features and function-word profiles | Euclidean / cosine |
+| `D_style` | stylistic | Stylometric features and function-word profiles | Euclidean / cosine |
 
-For each dimension, within-source diversity is computed from pairwise distances among texts generated for the same input. Additional analyses compare model outputs with human reference texts and examine whether distance from human writing is associated with human quality judgments. The repository also includes four single-text baseline metrics following Garces Arias et al. (2025): Diversity, Perplexity, Coherence, and Q*Text.
+For each dimension, within-source diversity is computed from pairwise distances among texts generated for the same input. Additional analyses compare model outputs with human reference texts and examine whether distance from human writing is associated with human quality judgments. The repository also includes four single-text baseline metrics following Garces Arias et al. (2025): Diversity, Perplexity, Coherence and Q*Text.
 
 ## Experimental Setup
 
@@ -23,9 +23,9 @@ The experiments cover two generation tasks, namely storytelling and translation.
 
 | Domain | Task | Source data | Human references |
 |---|---|---|---|
-| `storytelling_n200` | open-ended story continuation | WritingPrompts test split | 5 per prompt, sampled with a fixed seed from 5–45 available references |
-| `translation_ref3` | literary translation into German | PAR3 | 3 translations per source paragraph |
-| `translation_ref4` | literary translation into German | PAR3 | 4 translations per source paragraph |
+| `storytelling_n200` | Open-ended story continuation | WritingPrompts (Fan et al., 2018), test split | 5 per prompt, sampled with a fixed seed from 5–45 available references |
+| `translation_ref3` | Literary translation into German | PAR3 (Karpinska et al., 2022) | 3 translations per source paragraph |
+| `translation_ref4` | Literary translation into German | PAR3 (Karpinska et al., 2022) | 4 translations per source paragraph |
 
 Each domain contains 200 source inputs. Five outputs are generated per input and model.
 
@@ -36,15 +36,12 @@ The following open-weight instruction-tuned models are evaluated:
 - Mistral 7B Instruct v0.3 (`mistralai/Mistral-7B-Instruct-v0.3`; Jiang et al., 2023)
 - Qwen2.5 7B Instruct (`Qwen/Qwen2.5-7B-Instruct`; Qwen Team, 2024)
 
-
-All models are run locally with vLLM using the same decoding configuration: 
-`temperature = `, `top_p = ` and `max_tokens = `. Five outputs are sampled per input and model. 
-A Google Translate baseline is additionally included for the translation task.
+All models are run locally with vLLM (Kwon et al., 2023) using the same decoding configuration: `temperature = 1.0`, `top_p = 0.9`, `repetition_penalty = 1.0` and a fixed random seed of `42`. Five samples are generated per input and model. The maximum generation length is 1,280 new tokens for storytelling and 3,072 new tokens for translation, with a maximum model length of 8,192 tokens for translation. A Google Translate baseline is additionally included for the translation task.
 
 Human quality analyses use two externally annotated datasets:
+- **HANNA** (Chhun et al., 2022) for story-quality ratings
+- **LITEVAL-CORPUS** (Zhang, Zhao, & Eger, 2025) for MQM-based literary translation quality
 
-- **HANNA** for story-quality ratings
-- **LITEVAL-CORPUS** for MQM-based literary translation quality
 
 ## Repository Structure
 
@@ -105,54 +102,14 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Python 3.10 or newer is required.
+Python 3.10 or newer is required
 
 The editable installation ensures that changes in `metrics/metrics_lib/` and `common/` are immediately available in the notebooks.
 
-## Using the metrics library
-The group-level metrics take one list of texts (the generations for one prompt) and return a single score:
-
-```python
-from metrics.metrics_lib import (
-    semantic_diversity, lexical_diversity, syntactic_diversity,
-    discourse_diversity, narrative_diversity,
-)
-
-texts = [...]                       # e.g. 5 samples for the same prompt
-d_sem = semantic_diversity(texts)
-```
-Two exceptions:
-- `stylistic_diversity()` needs the whole batch of groups at once, because its components are z-standardized and min-max normalized across all groups being compared.
-- `compute_qstar()` likewise takes dataset-relative arrays, not single scalars.
-
-`metrics_lib.pairwise` exposes the step before the collapse to a single score — the full `n × n` distance matrix — which is what the within-source vs. distance-to-human comparisons are built from:
-```python
-from metrics.metrics_lib.pairwise import distance_matrix, within_between, slices_from_lengths
-
-D  = distance_matrix("D_sem", human_texts + gemma_texts)
-wb = within_between(D, slices_from_lengths([("human", len(human_texts)),
-                                            ("gemma", len(gemma_texts))]))
-wb.within["gemma"]              # within-model diversity
-wb.between[("human", "gemma")]  # distance to the human reference
-```
-
-## Loading the data
-All notebooks obtain their texts through one function, so the quality filter and the human downsampling are identical everywhere:
-```python
-from common.data_prep import load_texts
-
-df = load_texts("storytelling_n200")   # one row per text
-```
-
-The loader drops truncated model outputs (`finish_reason == 'length'`) and outputs with non-target-script leakage, removes language drift and exact duplicates from the human references, and downsamples human references to a fixed, seeded number per prompt so every group has the same size. A per-domain summary is available via:
-
-```bash
-python -m common
-```
 
 ## Data Availability
 
-The external datasets used in this project are not included in the repository because of licensing and redistribution restrictions. They must be obtained from their official sources and placed in the corresponding subdirectories under `data/`.
+The external datasets used in this project are not included in the repository because of licensing and redistribution restrictions. They must be obtained from their official sources and placed in the corresponding subdirectories under `data/`. External datasets and model weights remain subject to their original licenses and terms of use.
 
 ### PAR3
 
@@ -192,7 +149,7 @@ data/
 
 The generated outputs under `data_generation/generations/` are also not tracked because some files contain material from the original datasets.
 
-`data_generation/generations_public/` contains an ID-only version produced by `make_generations_public.py`. It retains identifiers and model generations while removing copyright-protected prompts, source texts, and human references.
+`data_generation/generations_public/` contains an ID-only version produced by `make_generations_public.py`. It retains identifiers and model generations while removing copyright-protected prompts, source texts and human references.
 
 ## Data Generation
 
@@ -209,10 +166,12 @@ data_generation/
 ```
 
 `writingprompts_generation.ipynb` generates the story continuations used in the storytelling experiments.
-
 `par3_generation.ipynb` generates the model translations used in the PAR3 experiments.
 
+The task instructions and prompt templates used for generation are defined directly in the corresponding generation notebooks.
+
 Generation requires a GPU. When using vLLM, models should be run in separate sessions because GPU memory is not reliably released when switching models within the same session.
+
 
 ## Loading the Data
 
@@ -226,11 +185,11 @@ df = load_texts("storytelling_n200")
 
 The loader provides a common preprocessing pipeline across analyses. It:
 
-- removes truncated model outputs with `finish_reason == "length"`
-- removes model outputs with non-target-script leakage
-- removes language drift from human references
-- removes exact duplicate human references
-- downsamples human references to a fixed number per input using a fixed seed
+- Removes truncated model outputs with `finish_reason == "length"`
+- Removes model outputs with non-target-script leakage
+- Removes language drift from human references
+- Removes exact duplicate human references
+- Downsamples human references to a fixed number per input using a fixed seed
 
 This ensures that the same cleaning and sampling procedure is applied across the metric and quality analyses.
 
@@ -258,10 +217,9 @@ d_sem = semantic_diversity(texts)
 ```
 
 Two metrics require dataset-level information rather than a single group.
+- `stylistic_diversity()` receives the full set of groups because its components are z-standardized and normalized across the groups being compared.
+- `compute_qstar()` likewise operates on dataset-relative arrays rather than individual scalar values
 
-`stylistic_diversity()` receives the full set of groups because its components are z-standardized and min-max normalized across the groups being compared.
-
-`compute_qstar()` likewise operates on dataset-relative arrays rather than individual scalar values.
 
 ### Pairwise Distances
 
@@ -313,25 +271,21 @@ Notebooks `01`–`04` can be switched between the two main domains using the `DO
 ```python
 DOMAIN = "storytelling_n200"
 ```
-
 or
-
 ```python
 DOMAIN = "translation_ref3"
 ```
 
 ## References
-
 - Barzilay, R., & Lapata, M. (2008). *Modeling Local Coherence: An Entity-Based Approach.*
 - Chhun, C., Colombo, P., Clavel, C., & Bellot, P. (2022). *Of Human Criteria and Automatic Metrics: A Benchmark of the Evaluation of Story Generation.*
 - Fan, A., Lewis, M., & Dauphin, Y. (2018). *Hierarchical Neural Story Generation.*
 - Garces Arias, E. et al. (2025). *Towards Better Open-Ended Text Generation: A Multicriteria Evaluation Framework.*
-- Karpinska, M. et al. (2022). *DEMETR / PAR3.*
-- Reagan, A. J. et al. (2016). *The Emotional Arcs of Stories Are Dominated by Six Basic Shapes.*
-- Zhang, R., Zhao, W., & Eger, S. (2025). *How Good Are LLMs for Literary Translation, Really? Literary Translation Evaluation with Humans and LLMs.*
 - Gemma Team et al. (2024). *Gemma 2: Improving Open Language Models at a Practical Size.*
 - Grattafiori et al. (2024). *The Llama 3 Herd of Models.*
 - Jiang et al. (2023). *Mistral 7B.*
+- Karpinska, M. et al. (2022). *DEMETR / PAR3.*
+- Kwon, W. et al. (2023). *Efficient Memory Management for Large Language Model Serving with PagedAttention.*
 - Qwen Team (2024). *Qwen2.5 Technical Report.*
-
-
+- Reagan, A. J. et al. (2016). *The Emotional Arcs of Stories Are Dominated by Six Basic Shapes.*
+- Zhang, R., Zhao, W., & Eger, S. (2025). *How Good Are LLMs for Literary Translation, Really? Literary Translation Evaluation with Humans and LLMs.*
