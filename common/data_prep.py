@@ -37,6 +37,7 @@ Returned frame -> one row per text::
 """
 
 from __future__ import annotations
+import hashlib
 import json
 import re
 import numpy as np
@@ -47,6 +48,7 @@ __all__ = [
     "REPO_ROOT", "GENERATIONS_DIR", "N_PROMPTS",
     "DOMAIN_CONFIG", "HUMAN_CAP", "HUMAN_SAMPLE_SEED",
     "load_texts", "load_many", "to_groups", "selected_human_ids", "exclusion_summary",
+    "dataframe_fingerprint",
 ]
 
 GENERATIONS_DIR = REPO_ROOT / "data_generation" / "generations"
@@ -268,6 +270,31 @@ def load_texts(
 def load_many(domains, **kwargs) -> pd.DataFrame:
     """:func:`load_texts` concatenated over several domains."""
     return pd.concat([load_texts(d, **kwargs) for d in domains], ignore_index=True)
+
+
+def dataframe_fingerprint(frame: pd.DataFrame, cols: list[str] | None = None) -> str:
+    """Content hash of ``cols`` over ``frame``'s rows (in row order), truncated to 16 hex chars.
+
+    Use as a cache-filename (or cache-payload) suffix in every notebook that caches per-text or
+    per-group results keyed by identity columns (prompt_id/source/story_id or a notebook's own
+    renamed equivalents): any change to the loaded corpus (quality filter, human cap, human
+    sample seed or a metric's own preprocessing) changes the fingerprint, so a stale cache
+    can never be silently reused under an unchanged row/group key.
+
+    ``cols`` defaults to :func:`load_texts`'s own output columns; pass an explicit list for a
+    notebook that renamed or dropped columns after loading (translation notebooks rename
+    ``text`` to ``translation``, storytelling ones to ``story``, etc.).
+    """
+
+    if cols is None:
+        cols = ["domain", "prompt_id", "source", "story_id", "text"]
+
+    # Compute a SHA256 hash of the concatenated string representation of each row in the specified columns
+    h = hashlib.sha256()
+    for row in frame[cols].itertuples(index=False, name=None):
+        h.update(("\x1f".join(map(str, row)) + "\n").encode("utf-8"))
+
+    return h.hexdigest()[:16]
 
 
 def to_groups(df: pd.DataFrame, min_size: int = 2) -> dict:
