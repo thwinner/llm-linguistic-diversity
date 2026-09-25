@@ -1,4 +1,4 @@
 feature_1,feature_2,spearman_r
-sent_len_mean,comma_density,0.727255178891516
-flesch_reading_ease,mean_syllables,-0.8827888751387603
-dialogue_ratio,mean_para_length,-0.6467832067252157
+sent_len_mean,comma_density,0.6937008128290417
+flesch_reading_ease,mean_syllables,-0.8781457382052992
+dialogue_ratio,mean_para_length,-0.6341296490708374

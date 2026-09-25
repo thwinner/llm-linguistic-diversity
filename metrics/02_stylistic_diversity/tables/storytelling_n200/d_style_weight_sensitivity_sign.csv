@@ -1,0 +1,11 @@
+pair,w=0.3,w=0.5,w=0.7
+human vs gemma,1.0,1.0,1.0
+human vs llama,1.0,1.0,1.0
+human vs mistral,1.0,1.0,1.0
+human vs qwen,1.0,1.0,1.0
+llama vs gemma,1.0,1.0,1.0
+llama vs mistral,1.0,1.0,1.0
+llama vs qwen,-1.0,-1.0,-1.0
+mistral vs gemma,1.0,1.0,1.0
+mistral vs qwen,-1.0,-1.0,-1.0
+qwen vs gemma,1.0,1.0,1.0
