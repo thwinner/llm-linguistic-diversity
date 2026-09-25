@@ -1,11 +1,10 @@
 """
-Baseline single-text metrics: lexical Diversity, OPT-2.7B Perplexity/Coherence and the combined Q*Text score.
+Baseline single-text metrics: lexical Diversity, OPT-2.7B Perplexity & Coherence and combined Q*Text score.
 
-- Definitions from Garces Arias et al., 2025: Towards Better Open-Ended Text
-Generation: A Multicriteria Evaluation Framework (GEM^2 2025)
-- OPT-2.7B is used as a fixed external scorer for both Perplexity and Coherence,
-matching the paper's own Coherence scorer (the paper itself uses two different
-scorers per metric -> here one shared scorer covers both for simplicity)
+- Definitions from Garces Arias et al., 2025: Towards Better Open-Ended Text Generation: 
+A Multicriteria Evaluation Framework (GEM^2 2025)
+- OPT-2.7B is used as a fixed external scorer for Perplexity and Coherence
+(the paper uses two differentvscorers per metric)
 - Q*Text reuses the paper's fitted parameter
 
     from metrics_lib.baseline import diversity_score, compute_perplexity, compute_coherence, compute_qstar
@@ -14,9 +13,8 @@ scorers per metric -> here one shared scorer covers both for simplicity)
     coh = compute_coherence(prompt, text)
     qstar = compute_qstar(perplexity_array, coherence_array, diversity_array)  # dataset-relative, see below
 """
-import re
+import warnings
 from functools import lru_cache
-
 import numpy as np
 
 DEFAULT_MODEL_NAME = 'facebook/opt-2.7b'
@@ -30,21 +28,20 @@ Q_STAR_PARAMS = {
     'alpha': (2.579, 1.496, 7.370),   # penalty strength: how sharply the score drops away from mu
 }
 
-# Simple tokenizer for diversity score (no punctuation, lowercase)
+# Simple whitespace tokenizer for diversity score
 def word_tokenize_simple(text):
-    return re.findall(r"\w+", text.lower())
-
-
+    return text.strip().split()
 
 def diversity_score(text, n_range=(2, 3, 4)):
     """DIV(x) = product over n in n_range of (unique n-grams / total n-grams). NaN if text too short."""
+
     # Tokenize text
     tokens = word_tokenize_simple(text)
 
     score = 1.0
     for n in n_range:
 
-        # At least n tokens are needed to form a single n-gram; otherwise return NaN
+        # At least n tokens are needed to form a single n-gram, otherwise return NaN
         if len(tokens) < n:
             return np.nan
 
@@ -57,16 +54,22 @@ def diversity_score(text, n_range=(2, 3, 4)):
     return score
 
 
-# Shared scorer for Perplexity and Coherence
+# Scorer for Perplexity and Coherence
 # Cached to avoid reloading the model/tokenizer
 @lru_cache(maxsize=None)
 def _load_scorer(model_name=DEFAULT_MODEL_NAME, device=None):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    # Determine device: MPS (Apple Silicon) if available, else CPU
+    # Determine device: CUDA (NVIDIA GPU) > MPS > CPU
     if device is None:
-        device = 'mps' if torch.backends.mps.is_available() else 'cpu'
+        if torch.cuda.is_available():
+            device = 'cuda'
+
+        elif torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
 
     # float16 on GPU/MPS to keep a multi-billion-parameter model's memory footprint manageable
     # CPU falls back to float32 since fp16 matmul kernels are unsupported/slow there
@@ -102,15 +105,13 @@ def compute_perplexity(text, model_name=DEFAULT_MODEL_NAME, max_tokens=DEFAULT_M
 
 
 def compute_coherence(prompt, text, model_name=DEFAULT_MODEL_NAME, max_tokens=DEFAULT_MAX_TOKENS):
-    """Mean log-probability of `text`'s tokens conditioned on `prompt`, under the scorer model."""
+    """Mean log-probability of `text`'s tokens conditioned on `prompt` under the scorer model."""
 
     import torch
     tokenizer, model, device = _load_scorer(model_name)
 
     # Tokenize the prompt and continuation, ensuring they fit within the max token limit and move to appropriate device.
-    # add_special_tokens=False on the continuation: some tokenizers (e.g. OPT's, which prepends
-    # </s> as BOS) would otherwise insert a spurious special token right at the prompt/continuation
-    # boundary once concatenated below.
+    # add_special_tokens=False on the continuation prevents the tokenizer from adding a special token (like </s>)
     prompt_ids = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=max_tokens)['input_ids']
     cont_ids = tokenizer(text, return_tensors='pt', truncation=True, max_length=max_tokens,
                           add_special_tokens=False)['input_ids']
@@ -125,7 +126,6 @@ def compute_coherence(prompt, text, model_name=DEFAULT_MODEL_NAME, max_tokens=DE
     #  Determine the length of the prompt
     prompt_len = prompt_ids.shape[1]
 
-    # If the combined input exceeds the model's context limit, truncate the oldest tokens from the beginning.
     # Context-window field differs by architecture (GPT-2: n_positions, OPT/most others: max_position_embeddings)
     ctx_limit = getattr(model.config, 'n_positions', None) or model.config.max_position_embeddings
 
@@ -162,6 +162,31 @@ def gaussian_penalty(x, mu, alpha):
     return np.exp(-alpha * (np.asarray(x, dtype=float) - mu) ** 2)
 
 
+def _minmax_bounds(x, name):
+    """NaN- and zero-range-safe dataset-wide min/max for one raw metric array.
+
+    - Uses nanmin/nanmax so a text with a missing (NaN) raw metric doesn't turn the whole min/max 
+      into NaN
+    - If every valid value is identical (zero-width range, e.g. a single-text subgroup),
+      min-max normalization is undefined (0/0). Flag this instead of dividing into inf/NaN.
+    """
+
+    # If all values are NaN, warn and return NaN for both min and max with degenerate=True
+    if np.all(np.isnan(x)):
+        warnings.warn(f'{name}: all values are NaN; normalized output will be all-NaN')
+        return np.nan, np.nan, True
+
+    # Compute the min and max of the valid (non-NaN) values and check for a degenerate range
+    lo, hi = np.nanmin(x), np.nanmax(x)
+    degenerate = hi == lo
+
+    if degenerate:
+        warnings.warn(f'{name}: degenerate range (min == max == {lo}); normalizing all valid '
+                       'values to the neutral midpoint 0.5 instead of dividing by zero')
+        
+    return lo, hi, degenerate
+
+
 def compute_qstar(perplexity, coherence, diversity, params=Q_STAR_PARAMS):
     """
     Q*Text = weighted sum of Gaussian-penalized, dataset-relative min-max-normalized metrics, x100.
@@ -175,14 +200,17 @@ def compute_qstar(perplexity, coherence, diversity, params=Q_STAR_PARAMS):
     diversity = np.asarray(diversity, dtype=float)
 
     # Min-max normalize each metric across the dataset, flipping perplexity's direction since lower is better
-    p_min, p_max = perplexity.min(), perplexity.max()
-    c_min, c_max = coherence.min(), coherence.max()
-    d_min, d_max = diversity.min(), diversity.max()
+    p_min, p_max, p_degenerate = _minmax_bounds(perplexity, 'Perplexity')
+    c_min, c_max, c_degenerate = _minmax_bounds(coherence, 'Coherence')
+    d_min, d_max, d_degenerate = _minmax_bounds(diversity, 'Diversity')
 
-    # Compute normalized metrics (m1, m2, m3) for perplexity, coherence, and diversity
-    m1 = (p_max - perplexity) / (p_max - p_min)   # Perplexity: raw LOWER is better -> flip direction
-    m2 = (coherence - c_min) / (c_max - c_min)    # Coherence: raw higher is better
-    m3 = (diversity - d_min) / (d_max - d_min)    # Diversity: raw higher is better
+    # Compute normalized metrics (m1, m2, m3) for perplexity, coherence, and diversity.
+    m1 = np.where(np.isnan(perplexity), np.nan, 0.5) if p_degenerate \
+        else (p_max - perplexity) / (p_max - p_min)   # Perplexity: raw LOWER is better -> flip direction
+    m2 = np.where(np.isnan(coherence), np.nan, 0.5) if c_degenerate \
+        else (coherence - c_min) / (c_max - c_min)    # Coherence: raw higher is better
+    m3 = np.where(np.isnan(diversity), np.nan, 0.5) if d_degenerate \
+        else (diversity - d_min) / (d_max - d_min)    # Diversity: raw higher is better
 
     # Apply Gaussian penalties to each normalized metric using the fitted parameters (mu, alpha) from Q_STAR_PARAMS
     w1, w2, w3 = params['w']

@@ -1,28 +1,31 @@
 """
 Discourse diversity (D_disc): entity-grid-based diversity metric
 
-Two variants of the entity-grid model from Barzilay & Lapata (2008):
+Two variants of the entity-grid model based on Barzilay & Lapata (2008):
 
-- discourse_diversity(): full variant -> per-entity grammatical roles
+- discourse_diversity(): role-based variant -> per-entity grammatical roles
   (Subject / Object / Other / Absent), salience-weighted, weighted bigram +
   trigram role-transition profiles
 - discourse_diversity_simple(): simplified variant -> binary presence/absence
   per entity (no roles, no salience weighting), single set of four transition types.
 
-Both reduce to a mean pairwise Jensen-Shannon divergence across a group of texts
-(e.g. multiple generations for the same prompt)
+Both reduce to a mean pairwise Jensen-Shannon divergence across a group of texts.
 
     from metrics_lib.discourse import discourse_diversity, discourse_diversity_simple
     d_disc = discourse_diversity(list_of_texts_for_one_prompt)
     d_disc_simple = discourse_diversity_simple(list_of_texts_for_one_prompt)
+
+- Entities follow Barzilay & Lapata's no-coreference setting: the head of every
+noun chunk (POS NOUN or PROPN), clustered by its normalized lemma. 
+- Both variants share this single extraction (extract_entities)
+- Role-based variant additionally reads off the head's grammatical role
+- A text with no usable entity profile yields no profile at all (None) and a group with 
+fewer than two usable profiles yields np.nan
 """
-import re
 from collections import Counter
 from itertools import combinations
-
 import numpy as np
 from scipy.stats import entropy
-
 from ._common import get_spacy_nlp
 
 
@@ -37,36 +40,46 @@ TRIGRAM_TRANSITIONS = [(r1, r2, r3) for r1 in ROLES for r2 in ROLES for r3 in RO
 N_BIGRAM = len(BIGRAM_TRANSITIONS)    # 16
 N_TRIGRAM = len(TRIGRAM_TRANSITIONS)  # 64
 
-# Entity must appear in >= this many sentences to count 
-# (detailed analysis of entity filtre in metrics/01_discourse_diversity/discourse_diversity.ipynb)
-MIN_ENTITY_FREQ = 2  
+# Entity must appear in >= this many sentences to count
+# (detailed analysis of the entity filter in metrics/01_discourse_diversity/disc_diversity.ipynb)
+MIN_ENTITY_FREQ = 2
+
+# Salience weighting scheme for role transitions of an entity seen in f sentences.
+# Robustness check in metrics/01_discourse_diversity/disc_diversity.ipynb.
+#   "none" -> w_e = 1
+#   "log"  -> w_e = log(1 + f_e)   (default)
+#   "freq" -> w_e = f_e
+WEIGHT_SCHEME = "log"
 
 # Grammatical dependency labels for subjects and objects (spaCy)
 _SUBJ_DEPS = {"nsubj", "nsubjpass", "csubj", "csubjpass"}
 _OBJ_DEPS = {"dobj", "iobj", "pobj", "attr", "oprd", "dative"}
-_VALID_NER = {"PERSON", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART", "FAC", "NORP"}
 
-# Narrower NER set used by the simplified (binary) entity grid (no FAC, NORP)
-_VALID_NER_SIMPLE = {"PERSON", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART"}
+# Head POS tags that count as a discourse entity
+_ENTITY_HEAD_POS = {"NOUN", "PROPN"}
 
 # All possible presence/absence transitions (for the simplified variant's profile vector)
 BINARY_TRANSITIONS = [(a, b) for a in (0, 1) for b in (0, 1)]
 N_BINARY = len(BINARY_TRANSITIONS)  # == 4
 
 
+def _entity_weight(freq, scheme=None):
+    """Salience weight for an entity appearing in `freq` sentences (see WEIGHT_SCHEME)."""
 
-def sent_tokenize(text, nlp=None):
-    """Sentence-tokenize using spaCy's sentencizer"""
-    nlp = nlp if nlp is not None else get_spacy_nlp()
-    sents = [sent.text.strip() for sent in nlp(text).sents]
-
-    return [s for s in sents if len(s.strip()) > 5]
+    scheme = scheme or WEIGHT_SCHEME
+    if scheme == "none":
+        return 1.0
+    if scheme == "freq":
+        return float(freq)
+    if scheme == "log":
+        return float(np.log1p(freq))
+    
+    raise ValueError(f"unknown weight scheme: {scheme!r}")
 
 
 def _get_role_for_token(token):
     """Grammatical role of a token, walking up the dependency chain to the
-    governing subject/object (so coordinated/appositive entities, e.g. "Phil
-    and Steve" in "...to his sons, Phil and Steve", resolve to the same role)."""
+    governing subject/object. Returns ROLE_S, ROLE_O, or ROLE_X (other)."""
 
     node = token
     while True:
@@ -79,42 +92,46 @@ def _get_role_for_token(token):
         node = node.head
 
 
-def extract_entity_roles_spacy(sent_doc):
-    """{entity_name: role} for one spaCy-parsed sentence. Ties broken S > O > X """
+def extract_entities(sent_doc):
+    """Discourse entities for one spaCy-parsed sentence: 
+    Head of every noun chunk, kept when its POS is NOUN or
+    PROPN, clustered by the head's normalized lemma. Each entity is tagged with
+    its grammatical role (priority S > O > X).
 
+    Returns {entity_id: role}.
+    """
     entity_roles = {}
     role_priority = {ROLE_S: 3, ROLE_O: 2, ROLE_X: 1}
 
-    # Use spaCy's named entity recognition to find entities and assign roles based on grammatical dependencies
-    for ent in sent_doc.ents:
+    # Walk through all noun chunks in the sentence and extract their head tokens
+    for chunk in sent_doc.noun_chunks:
+        head = chunk.root
 
-        # Ignore entities that are not of the valid types (PERSON, ORG, GPE, etc.)
-        if ent.label_ not in _VALID_NER:
+        # Only noun / proper-noun heads count as entities (drops pronoun-headed chunks)
+        if head.pos_ not in _ENTITY_HEAD_POS:
             continue
 
-        # Normalize entity name to lowercase and strip whitespace
-        name = ent.text.lower().strip()
+        # Entity id = normalized lemma of the head noun
+        name = head.lemma_.lower().strip()
 
-        # Skip entities that are too short
+        # Ignore very short lemmas (e.g., single-character pronouns, punctuation, etc.)
         if len(name) < 2:
             continue
 
-        # Determine the role of the entity based on its tokens and their dependencies prioritizing Subject > Object > Other
-        role = ROLE_X
-        for token in ent:
-            token_role = _get_role_for_token(token)
+        # Role from the head token, walking up the dependency chain
+        role = _get_role_for_token(head)
 
-            # Update the role if the new token's role has higher priority (S > O > X)
-            if role_priority.get(token_role, 0) > role_priority.get(role, 0):
-                role = token_role
-
-        # If the entity is already in the dictionary, only update its role if the new role has higher priority (S > O > X)
+        # Keep the highest-priority role for each entity (S > O > X)
         if name not in entity_roles or role_priority[role] > role_priority[entity_roles[name]]:
             entity_roles[name] = role
 
     return entity_roles
 
 
+def extract_entities_simple(sent_doc):
+    """Set of discourse entity ids in one sentence (roles ignored) -> same
+    extraction as extract_entities(), used by the simplified binary grid."""
+    return set(extract_entities(sent_doc))
 
 
 def build_entity_grid(text, nlp=None):
@@ -122,26 +139,28 @@ def build_entity_grid(text, nlp=None):
 
     Returns (grid, sents, entity_freq):
       grid: {entity_name: [role_sent1, role_sent2, ...]}, role in {S, O, X, -}
-      sents: list of sentences
+      sents: list of sentence spans from the single parse (alpha-only, no
+        minimum-length threshold)
       entity_freq: {entity_name: number of sentences it appears in}
     """
 
-    # Use spaCy to sentence-tokenize and extract entity roles for each sentence
+    # Parse the text once; entity extraction runs directly on the resulting
+    # sentence spans (no second parse over re-joined sentence strings)
     nlp = nlp if nlp is not None else get_spacy_nlp()
-    sents = sent_tokenize(text, nlp=nlp)
+    doc = nlp(text)
+    sents = [s for s in doc.sents if any(ch.isalpha() for ch in s.text)]
 
     # If there are fewer than 2 sentences, return empty structures since we can't compute transitions
     if len(sents) < 2:
         return {}, sents, {}
 
-    # Use spaCy's nlp.pipe to efficiently process all sentences in batches and extract entity roles for each sentence
-    docs = list(nlp.pipe(sents, batch_size=50))
-    sent_entity_roles = [extract_entity_roles_spacy(doc) for doc in docs]
+    sent_entity_roles = [extract_entities(s) for s in sents]
 
     # Collect all unique entities across sentences to build the grid and count their frequencies
     all_entities = set()
     for roles in sent_entity_roles:
         all_entities.update(roles.keys())
+
     if not all_entities:
         return {}, sents, {}
 
@@ -163,33 +182,32 @@ def build_entity_grid(text, nlp=None):
     return grid, sents, entity_freq
 
 
-def compute_transition_profile(text, use_trigrams=True, nlp=None):
+def compute_transition_profile(text, use_trigrams=True, nlp=None, weight_scheme=None):
     """Weighted bigram/trigram role-transition profile for one text.
 
-    - Salience weighting w_e = log(1 + freq(e))
+    - Salience weighting w_e (see WEIGHT_SCHEME / weight_scheme; default log(1 + freq(e)))
     - Entities below MIN_ENTITY_FREQ are dropped
-    
-    Returns (bigram_profile, trigram_profile_or_None, grid, sents, entity_freq)
+
+    Returns (bigram_profile, trigram_profile, grid, sents, entity_freq).
+      bigram_profile is None when the text has no usable entity profile
+        (< 2 sentences, no entities, or none passing the frequency filter).
+      trigram_profile is None when trigrams are disabled or no surviving entity
+        spans >= 3 sentences.
     """
 
     # Use spaCy to build the entity grid and extract sentences and entity frequencies
     grid, sents, entity_freq = build_entity_grid(text, nlp=nlp)
 
-    # If there are no entities or fewer than 2 sentences, return uniform distributions for bigram and trigram profiles
+    # No entities / too few sentences -> no usable profile (NA, not a uniform fallback)
     if not grid or len(sents) < 2:
-        return (
-            np.ones(N_BIGRAM) / N_BIGRAM,
-            np.ones(N_TRIGRAM) / N_TRIGRAM if use_trigrams else None,
-            grid, sents, entity_freq,
-        )
+        return None, None, grid, sents, entity_freq
 
     # Compute weighted bigram and trigram counts for the entity roles across sentences, applying salience weighting based on entity frequency
     bigram_counts, trigram_counts = Counter(), Counter()
     for entity, roles_seq in grid.items():
         if entity_freq[entity] < MIN_ENTITY_FREQ:
             continue
-        # Compute the salience weight for the entity based on its frequency across sentences
-        weight = np.log(1 + entity_freq[entity])
+        weight = _entity_weight(entity_freq[entity], weight_scheme)
 
         # Compute bigram counts for the entity's role sequence across sentences
         for k in range(len(roles_seq) - 1):
@@ -200,36 +218,23 @@ def compute_transition_profile(text, use_trigrams=True, nlp=None):
             for k in range(len(roles_seq) - 2):
                 trigram_counts[(roles_seq[k], roles_seq[k + 1], roles_seq[k + 2])] += weight
 
-    # Normalize the bigram and trigram counts to create probability profiles for the entity role transitions, ensuring that the total counts are not zero to avoid division by zero errors
-    bigram_total = sum(bigram_counts.values()) or 1
+    # No entity survived the frequency filter -> no usable profile
+    bigram_total = sum(bigram_counts.values())
+    if bigram_total == 0:
+        return None, None, grid, sents, entity_freq
+
     bigram_profile = np.array([bigram_counts[t] / bigram_total for t in BIGRAM_TRANSITIONS])
 
+    # Compute the trigram profile if trigrams are being used and there are enough sentences
     trigram_profile = None
     if use_trigrams:
-        trigram_total = sum(trigram_counts.values()) or 1
-        trigram_profile = np.array([trigram_counts[t] / trigram_total for t in TRIGRAM_TRANSITIONS])
+        trigram_total = sum(trigram_counts.values())
+
+        # Only compute the trigram profile if there are surviving trigram counts
+        if trigram_total > 0:
+            trigram_profile = np.array([trigram_counts[t] / trigram_total for t in TRIGRAM_TRANSITIONS])
 
     return bigram_profile, trigram_profile, grid, sents, entity_freq
-
-
-def extract_entities_simple(sent_doc):
-    """Set of discourse entity names present in one spaCy-parsed sentence (no roles)"""
-
-    entities = set()
-
-    # Use spaCy's named entity recognition to find entities, ignoring grammatical role
-    for ent in sent_doc.ents:
-        if ent.label_ not in _VALID_NER_SIMPLE:
-            continue
-
-        # Normalize entity name to lowercase and strip whitespace; skip if too short
-        name = ent.text.lower().strip()
-        if len(name) < 2:
-            continue
-
-        entities.add(name)
-
-    return entities
 
 
 def build_binary_grid(text, nlp=None):
@@ -237,20 +242,21 @@ def build_binary_grid(text, nlp=None):
 
     Returns (grid, sents):
       grid: {entity_name: [0/1, 0/1, ...]}, presence per sentence
-      sents: list of sentences
+      sents: list of sentence spans from the single parse (alpha-only, no
+        minimum-length threshold)
     """
 
-    # Use spaCy to sentence-tokenize and extract entities present in each sentence
+    # Parse the text once; entity extraction runs directly on the resulting
+    # sentence spans (no second parse over re-joined sentence strings)
     nlp = nlp if nlp is not None else get_spacy_nlp()
-    sents = sent_tokenize(text, nlp=nlp)
+    doc = nlp(text)
+    sents = [s for s in doc.sents if any(ch.isalpha() for ch in s.text)]
 
     # If there are fewer than 2 sentences, return empty structures since we can't compute transitions
     if len(sents) < 2:
         return {}, sents
 
-    # Use spaCy's nlp.pipe to efficiently process all sentences in batches and extract entities for each sentence
-    docs = list(nlp.pipe(sents, batch_size=50))
-    sent_entities = [extract_entities_simple(doc) for doc in docs]
+    sent_entities = [extract_entities_simple(s) for s in sents]
 
     # Collect all unique entities across sentences to build the grid
     all_entities = set()
@@ -270,14 +276,16 @@ def build_binary_grid(text, nlp=None):
 
 def compute_binary_transition_profile(text, nlp=None):
     """Presence/absence transition profile (4 bins: 00, 01, 10, 11) for one text.
-    Entities are weighted equally, with no salience weighting or frequency filtering
+    Entities are weighted equally, with no salience weighting or frequency filtering.
+
+    Returns None when the text has no usable entity profile (< 2 sentences or no entities).
     """
     # Use spaCy to build the binary entity grid and extract sentences
     grid, sents = build_binary_grid(text, nlp=nlp)
 
-    # If there are no entities or fewer than 2 sentences, return a uniform distribution
+    # No entities / too few sentences -> no usable profile (NA, not a uniform fallback)
     if not grid or len(sents) < 2:
-        return np.ones(N_BINARY) / N_BINARY
+        return None
 
     # Compute presence/absence transition counts across all entities
     counts = Counter()
@@ -285,31 +293,41 @@ def compute_binary_transition_profile(text, nlp=None):
         for k in range(len(presence) - 1):
             counts[(presence[k], presence[k + 1])] += 1
 
+    # No entity survived the frequency filter -> no usable profile
+    total = sum(counts.values())
+    if total == 0:
+        return None
+
     # Normalize the counts to create a probability profile over the 4 transition types
-    total = sum(counts.values()) or 1
     return np.array([counts[t] / total for t in BINARY_TRANSITIONS])
 
 
 def jsd(p, q):
-    """Jensen-Shannon divergence (symmetric, in [0, ln2])."""
+    """Jensen-Shannon divergence (symmetric, in [0, ln2]).
 
-    # Add a small constant to avoid division by zero
-    p = np.asarray(p, dtype=float) + 1e-10
-    q = np.asarray(q, dtype=float) + 1e-10
+    Both inputs must be non-negative and carry positive mass
+    """
+    # Convert inputs to numpy arrays and normalize them to form valid probability distributions
+    p = np.asarray(p, dtype=float)
+    q = np.asarray(q, dtype=float)
 
-    # Normalize the distributions to ensure they sum to 1
-    p /= p.sum()
-    q /= q.sum()
+    p = p / p.sum()
+    q = q / q.sum()
 
-    # Compute the average distribution and calculate the Jensen-Shannon divergence using the entropy function
+    # Compute the Jensen-Shannon divergence using the average distribution m
     m = 0.5 * (p + q)
     return 0.5 * (entropy(p, m) + entropy(q, m))
 
 
-def discourse_diversity(texts, use_trigrams=True, alpha_trigram=0.3, nlp=None):
+def discourse_diversity(texts, use_trigrams=True, alpha_trigram=0.3, nlp=None, weight_scheme=None):
     """D_disc for one group of texts: mean pairwise JSD of their transition profiles.
 
     D_disc = (1 - alpha_trigram) * JSD_bigram + alpha_trigram * JSD_trigram
+
+    Texts with no usable entity profile are dropped. The bigram term averages
+    over all remaining texts. The trigram term averages over the subset with a
+    trigram profile (>= 3 sentences) and is only added when at least two such
+    texts remain. Returns np.nan if fewer than two texts have a usable profile.
     """
     # At least 2 texts are required to compute pairwise diversity
     if len(texts) < 2:
@@ -318,21 +336,34 @@ def discourse_diversity(texts, use_trigrams=True, alpha_trigram=0.3, nlp=None):
     # Compute the transition profiles (bigram and trigram) for each text in the group, using spaCy for NLP processing
     profiles_bi, profiles_tri = [], []
     for t in texts:
-        bi, tri, _, _, _ = compute_transition_profile(t, use_trigrams=use_trigrams, nlp=nlp)
+        bi, tri, _, _, _ = compute_transition_profile(
+            t, use_trigrams=use_trigrams, nlp=nlp, weight_scheme=weight_scheme
+        )
+
+        # Only keep texts with a usable bigram profile (>= 2 sentences, >= 1 entity passing the frequency filter)
+        if bi is None:
+            continue
         profiles_bi.append(bi)
+
+        # Only keep texts with a usable trigram profile (>= 3 sentences, >= 1 entity passing the frequency filter)
         if tri is not None:
             profiles_tri.append(tri)
 
+    # Not enough usable profiles -> undefined
+    if len(profiles_bi) < 2:
+        return float("nan")
+
     # Compute the mean pairwise Jensen-Shannon divergence (JSD) for bigram profiles across all pairs of texts
     profiles_bi = np.array(profiles_bi)
-    pairs = list(combinations(range(len(texts)), 2))
-    jsd_bi = np.mean([jsd(profiles_bi[i], profiles_bi[j]) for i, j in pairs])
+    bi_pairs = list(combinations(range(len(profiles_bi)), 2))
+    jsd_bi = np.mean([jsd(profiles_bi[i], profiles_bi[j]) for i, j in bi_pairs])
 
-    # If trigrams are being used and trigram profiles were successfully computed, compute the mean pairwise JSD 
-    # for trigram profiles and combine it with the bigram JSD using the specified alpha_trigram weight
-    if use_trigrams and profiles_tri:
+    # If trigrams are being used and at least two texts have a trigram profile, compute the mean
+    # pairwise trigram JSD over that subset and combine it with the bigram JSD via alpha_trigram
+    if use_trigrams and len(profiles_tri) >= 2:
         profiles_tri = np.array(profiles_tri)
-        jsd_tri = np.mean([jsd(profiles_tri[i], profiles_tri[j]) for i, j in pairs])
+        tri_pairs = list(combinations(range(len(profiles_tri)), 2))
+        jsd_tri = np.mean([jsd(profiles_tri[i], profiles_tri[j]) for i, j in tri_pairs])
         return float((1 - alpha_trigram) * jsd_bi + alpha_trigram * jsd_tri)
 
     return float(jsd_bi)
@@ -342,7 +373,9 @@ def discourse_diversity_simple(texts, nlp=None):
     """D_disc (simplified) for one group of texts: mean pairwise JSD of binary
     presence/absence transition profiles.
 
-    Entities are weighted equally, without frequency filtering or grammatical roles
+    Entities are weighted equally, without frequency filtering or grammatical
+    roles. Texts with no usable entity profile are dropped. Returns np.nan if
+    fewer than two texts have a usable profile.
     """
     # At least 2 texts are required to compute pairwise diversity
     if len(texts) < 2:
@@ -350,8 +383,16 @@ def discourse_diversity_simple(texts, nlp=None):
 
     # Compute the binary transition profile for each text in the group, using spaCy for NLP processing
     nlp = nlp if nlp is not None else get_spacy_nlp()
-    profiles = np.array([compute_binary_transition_profile(t, nlp=nlp) for t in texts])
+    profiles = [
+        p for p in (compute_binary_transition_profile(t, nlp=nlp) for t in texts) if p is not None
+    ]
+
+    # Not enough usable profiles -> undefined
+    if len(profiles) < 2:
+        return float("nan")
 
     # Compute the mean pairwise Jensen-Shannon divergence (JSD) across all pairs of texts
-    pairs = list(combinations(range(len(texts)), 2))
+    profiles = np.array(profiles)
+    pairs = list(combinations(range(len(profiles)), 2))
+    
     return float(np.mean([jsd(profiles[i], profiles[j]) for i, j in pairs]))

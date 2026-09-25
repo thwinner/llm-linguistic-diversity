@@ -2,10 +2,9 @@
 Narrative diversity (D_narr): sentiment-arc divergence across a group of texts
 
 Per text: split into ARC_LENGTH equal-proportion narrative segments, average
-per-sentence sentiment within each segment -> one sentiment arc vector per
-text
-D_narr for a group = mean pairwise Euclidean distance between arc
-vectors (Reagan et al., 2016).
+per-sentence sentiment within each segment -> one sentiment arc vector per text
+
+D_narr for a group = mean pairwise Euclidean distance between arc vectors (Reagan et al., 2016)
 
     from metrics_lib.narrative import narrative_diversity
     d_narr = narrative_diversity(list_of_texts_for_one_prompt)
@@ -18,19 +17,33 @@ Two sentiment scorers are available via `method`:
 """
 from functools import lru_cache
 from itertools import combinations
-
 import numpy as np
 
-ARC_LENGTH = 10     # number of narrative segments to split each text into (Reagan et al., 2016 used 10)
-MIN_SENTENCES = 10  # must be >= ARC_LENGTH so every bin gets >= 1 sentence
+
+# Number of narrative segments to split each text into
+ARC_LENGTH = 10
+
+# Must be >= ARC_LENGTH so every bin gets >= 1 sentence
+MIN_SENTENCES = 10
+
+
+@lru_cache(maxsize=1)
+def _ensure_punkt():
+    """Download NLTK's Punkt tokenizer data only if not already present, and only once per run."""
+    import nltk
+
+    for resource in ('tokenizers/punkt', 'tokenizers/punkt_tab'):
+        try:
+            nltk.data.find(resource)
+        except LookupError:
+            nltk.download(resource.split('/')[-1], quiet=True)
+
+    return True
 
 
 def _sent_tokenize(text):
     """Tokenize text into sentences using NLTK's Punkt tokenizer"""
-    import nltk
-
-    nltk.download('punkt', quiet=True)
-    nltk.download('punkt_tab', quiet=True)
+    _ensure_punkt()
 
     from nltk.tokenize import sent_tokenize
 
@@ -40,23 +53,33 @@ def _sent_tokenize(text):
 def bin_to_arc(scores, arc_length: int = ARC_LENGTH):
     """Split per-sentence scores into `arc_length` contiguous segments and average each."""
 
-    # Split into contiguous segments of equal size
-    # np.array_split splits into N segments of size len(scores)//N or len(scores)//N + 1, so the last segment may be larger
+    # Split into `arc_length` contiguous segments of near-equal size.
+    # The last segment may be shorter if len(scores) is not divisible by arc_length.
     bins = np.array_split(np.asarray(scores), arc_length)
 
     return np.array([b.mean() for b in bins])
 
 
-# Use cached transformer pipeline and VADER analyzer to avoid repeated model loading
+# Use cached transformer pipeline to avoid repeated model loading
 @lru_cache(maxsize=1)
 def _get_transformer_pipeline():
     from transformers import pipeline
+    import torch
+
+    # Prefer an accelerator: CUDA (Linux/Colab), then MPS (Apple Silicon), else CPU.
+    # MPS was disabled here historically but is stable for this model on torch >= 2.1.
+    if torch.cuda.is_available():
+        device = 0
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+    else:
+        device = -1
 
     # Use the "siebert/sentiment-roberta-large-english" model
     return pipeline(
         'sentiment-analysis',
         model='siebert/sentiment-roberta-large-english',
-        device=-1,  # forced CPU: MPS backend was unstable for batched transfers on the dev machine
+        device=device,
         truncation=True,
     )
 
@@ -70,10 +93,10 @@ def _get_vader_analyzer():
 
 def get_sentiment_arc(text: str, method: str = 'transformer', arc_length: int = ARC_LENGTH,
                        min_sentences: int = MIN_SENTENCES, batch_size: int = 32):
-    """Sentiment arc for one text, or None if it has fewer than min_sentences sentences."""
+    """Sentiment arc for one text or None if it has fewer than min_sentences sentences."""
 
-    # Split text into sentences
-    sentences = [s.strip() for s in _sent_tokenize(text) if len(s.strip()) > 5]
+    # Split text into sentences (keep every non-empty sentence, no length / word-count filter)
+    sentences = [s.strip() for s in _sent_tokenize(text) if s.strip()]
 
     # Filter out texts that are too short to produce a full arc
     if len(sentences) < min_sentences:
@@ -101,6 +124,8 @@ def get_sentiment_arc(text: str, method: str = 'transformer', arc_length: int = 
 
 def mean_pairwise_l2(arcs):
     """Mean pairwise Euclidean distance between a list of arc vectors. 0.0 if fewer than 2 arcs."""
+
+    # Return 0.0 if fewer than 2 arcs (pairwise diversity is undefined)
     if len(arcs) < 2:
         return 0.0
 

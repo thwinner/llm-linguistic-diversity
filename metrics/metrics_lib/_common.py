@@ -11,6 +11,6 @@ def get_spacy_nlp():
     """
     try:
         import spacy
-        return spacy.load("en_core_web_sm")
+        return spacy.load("en_core_web_sm", disable=["ner"])  # NER unused across metrics_lib
     except Exception:
         return None
