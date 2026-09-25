@@ -95,16 +95,15 @@ Each metric notebook writes its result tables to its own `tables/` directory and
 
 ## Installation
 
-Install the required dependencies and the local `metrics_lib` package:
+Install the required dependencies:
 
 ```bash
 pip install -r requirements.txt
-pip install -e .
 ```
 
 Python 3.10 or newer is required
 
-The editable installation ensures that changes in `metrics/metrics_lib/` and `common/` are immediately available in the notebooks.
+No further installation step is needed. The notebooks add the repository root to `sys.path` themselves, so `metrics/metrics_lib/` and `common/` are importable as soon as the repository is checked out, and changes to them take effect immediately.
 
 
 ## Data Availability
