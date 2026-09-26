@@ -1,0 +1,2 @@
+metric,prompt_id,error_type,error
+D_sem,par3_0159,RuntimeError,Invalid buffer size: 12.76 GiB
