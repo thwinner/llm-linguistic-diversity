@@ -26,7 +26,7 @@ The experiments cover two generation tasks, namely storytelling and translation.
 | Domain | Task | Source data | Human references |
 |---|---|---|---|
 | `storytelling_n200` | Open-ended story continuation | WritingPrompts (Fan et al., 2018), test split | 5 per prompt, sampled from the available references using a fixed human-reference sampling seed (20260902) |
-| `translation_ref3` | Literary translation into German | PAR3 (Karpinska et al., 2022) | 3 translations per source paragraph |
+| `translation_ref3` | Literary translation into German | PAR3 (Thai et al., 2022) | 3 translations per source paragraph |
 
 Each domain contains 200 source inputs. Five outputs are initially generated per input and model. Outputs failing the predefined quality filters are removed before analysis.
 
@@ -117,9 +117,10 @@ The external datasets used in this project are not included in the repository be
 
 ### PAR3
 
-Karpinska et al. (2022), *PAR3*.
+Thai et al. (2022), *PAR3*.
 
 - [Official repository](https://github.com/katherinethai/par3)
+- [Paper](https://aclanthology.org/2022.emnlp-main.672/?utm_source=chatgpt.com) 
 
 ### LITEVAL-CORPUS
 
@@ -287,8 +288,8 @@ DOMAIN = "translation_ref3"
 - Gemma Team et al. (2024). *Gemma 2: Improving Open Language Models at a Practical Size.*
 - Grattafiori et al. (2024). *The Llama 3 Herd of Models.*
 - Jiang et al. (2023). *Mistral 7B.*
-- Karpinska, M. et al. (2022). *DEMETR / PAR3.*
 - Kwon, W. et al. (2023). *Efficient Memory Management for Large Language Model Serving with PagedAttention.*
 - Qwen Team (2024). *Qwen2.5 Technical Report.*
 - Reagan, A. J. et al. (2016). *The Emotional Arcs of Stories Are Dominated by Six Basic Shapes.*
+- Thai, K., Karpinska, M., Krishna, K., Ray, B., Inghilleri, M., Wieting, J., & Iyyer, M. (2022). Exploring Document-Level Literary Machine Translation with Parallel Paragraphs from World Literature.
 - Zhang, R., Zhao, W., & Eger, S. (2025). *How Good Are LLMs for Literary Translation, Really? Literary Translation Evaluation with Humans and LLMs.*
