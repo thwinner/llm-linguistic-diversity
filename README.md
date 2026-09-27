@@ -8,12 +8,12 @@ This repository investigates linguistic diversity in repeatedly sampled LLM outp
 
 | Metric | Dimension | Representation | Distance |
 |---|---|---|---|
-| `D_sem` | semantic | Nomic Embed Text v1.5 embeddings | cosine |
-| `D_lex` | lexical | Word unigrams | Jaccard |
-| `D_syn` | syntactic | POS-tag bigrams | Jaccard |
-| `D_disc` | discourse | Entity grids | Jensen–Shannon |
-| `D_narr` | narrative | 10-segment sentiment arcs | Euclidean |
-| `D_style` | stylistic | Stylometric features and function-word profiles | Euclidean / cosine |
+| `D_sem` | Semantic | Nomic Embed Text v1.5 embeddings | Cosine |
+| `D_lex` | Lexical | Word unigrams | Jaccard |
+| `D_syn` | Syntactic | POS-tag bigrams | Jaccard |
+| `D_disc` | Discourse | Entity grids | Jensen–Shannon |
+| `D_narr` | Narrative | 10-segment sentiment arcs | Euclidean |
+| `D_style` | Stylistic | Stylometric features and function-word profiles | Euclidean / cosine |
 
 For each dimension, within-source diversity is computed from pairwise distances among texts generated for the same input. Additional analyses compare model outputs with human reference texts and examine whether distance from human writing is associated with human quality judgments. The repository also includes four single-text baseline metrics following Garces Arias et al. (2025): Diversity, Perplexity, Coherence and Q*Text.
 
@@ -27,7 +27,6 @@ The experiments cover two generation tasks, namely storytelling and translation.
 |---|---|---|---|
 | `storytelling_n200` | Open-ended story continuation | WritingPrompts (Fan et al., 2018), test split | 5 per prompt, sampled from the available references using a fixed human-reference sampling seed (20260902) |
 | `translation_ref3` | Literary translation into German | PAR3 (Karpinska et al., 2022) | 3 translations per source paragraph |
-| `translation_ref4` | Literary translation into German | PAR3 (Karpinska et al., 2022) | 4 translations per source paragraph |
 
 Each domain contains 200 source inputs. Five outputs are initially generated per input and model. Outputs failing the predefined quality filters are removed before analysis.
 
@@ -164,8 +163,7 @@ The generation notebooks are located in `data_generation/`:
 data_generation/
 ├── generations/
 │   ├── storytelling_n200/
-│   ├── translation_ref3/
-│   └── translation_ref4/
+│   └── translation_ref3/
 ├── par3_generation.ipynb
 └── writingprompts_generation.ipynb
 ```
@@ -221,7 +219,7 @@ texts = [...]
 d_sem = semantic_diversity(texts)
 ```
 
-Two metrics require dataset-level information rather than a single group.
+Two metrics require dataset-level information and not a single group.
 - `stylistic_diversity()` receives the full set of groups because its components are z-standardized and normalized across the groups being compared.
 - `compute_qstar()` likewise operates on dataset-relative arrays rather than individual scalar values
 
