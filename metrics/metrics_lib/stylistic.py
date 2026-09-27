@@ -1,4 +1,4 @@
-"""Stylistic diversity (D_style): 11-feature stylometric distance
+"""Stylistic diversity (D_style): stylometric distance over 7 scalar features + function words
 
 D_style combines two components per group of texts (i.e. multiple generations for one prompt):
   - mean pairwise Euclidean distance over 7 z-standardized scalar features
@@ -71,7 +71,7 @@ _CONTRACTION_FRAGMENTS = {
 }
 
 
-# All stylistic features extracted by extract_style_features() -> 11 total
+# All scalar features extracted by extract_style_features() -> 10 scalar + function-word distribution = 11 total
 ALL_SCALAR_FEATURES = [
     'sent_len_mean', 'sent_len_var', 'flesch_reading_ease',
     'comma_density', 'adj_adv_ratio', 'mean_syllables',
