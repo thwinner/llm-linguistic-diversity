@@ -17,17 +17,19 @@ This repository investigates linguistic diversity in repeatedly sampled LLM outp
 
 For each dimension, within-source diversity is computed from pairwise distances among texts generated for the same input. Additional analyses compare model outputs with human reference texts and examine whether distance from human writing is associated with human quality judgments. The repository also includes four single-text baseline metrics following Garces Arias et al. (2025): Diversity, Perplexity, Coherence and Q*Text.
 
+Across both storytelling and literary translation, the results show that model outputs are generally less diverse than human references, although the magnitude and structure of this difference vary across diversity dimensions, tasks and models. The strongest differences emerge in dimensions related to lexical, semantic and stylistic variation, while other dimensions show more mixed patterns. At the same time, the analyses indicate that diversity and text quality are related but distinct properties, suggesting that lower output diversity cannot be reduced to differences in generation quality alone.
+
 ## Experimental Setup
 
 The experiments cover two generation tasks, namely storytelling and translation.
 
 | Domain | Task | Source data | Human references |
 |---|---|---|---|
-| `storytelling_n200` | Open-ended story continuation | WritingPrompts (Fan et al., 2018), test split | 5 per prompt, sampled with a fixed seed from 5–45 available references |
+| `storytelling_n200` | Open-ended story continuation | WritingPrompts (Fan et al., 2018), test split | 5 per prompt, sampled from the available references using a fixed human-reference sampling seed (20260902) |
 | `translation_ref3` | Literary translation into German | PAR3 (Karpinska et al., 2022) | 3 translations per source paragraph |
 | `translation_ref4` | Literary translation into German | PAR3 (Karpinska et al., 2022) | 4 translations per source paragraph |
 
-Each domain contains 200 source inputs. Five outputs are generated per input and model.
+Each domain contains 200 source inputs. Five outputs are initially generated per input and model. Outputs failing the predefined quality filters are removed before analysis.
 
 The following open-weight instruction-tuned models are evaluated:
 
@@ -36,7 +38,8 @@ The following open-weight instruction-tuned models are evaluated:
 - Mistral 7B Instruct v0.3 (`mistralai/Mistral-7B-Instruct-v0.3`; Jiang et al., 2023)
 - Qwen2.5 7B Instruct (`Qwen/Qwen2.5-7B-Instruct`; Qwen Team, 2024)
 
-All models are run locally with vLLM (Kwon et al., 2023) using the same decoding configuration: `temperature = 1.0`, `top_p = 0.9`, `repetition_penalty = 1.0` and a fixed random seed of `42`. Five samples are generated per input and model. The maximum generation length is 1,280 new tokens for storytelling and 3,072 new tokens for translation, with a maximum model length of 8,192 tokens for translation. A Google Translate baseline is additionally included for the translation task.
+All models are run locally with vLLM (Kwon et al., 2023) using the same decoding configuration: `temperature = 1.0`, `top_p = 0.9`, `repetition_penalty = 1.0` and a fixed random seed of `42`. Five samples are generated per input and model. The maximum generation length is 1,280 new tokens for storytelling (maximum model length: 2,048 tokens) and 3,072 new tokens for translation (maximum model length: 8,192 tokens). A Google Translate baseline is additionally available for the translation task but is not included in the main diversity and quality analyses.
+
 
 Human quality analyses use two externally annotated datasets:
 - **HANNA** (Chhun et al., 2022) for story-quality ratings
@@ -103,7 +106,10 @@ pip install -r requirements.txt
 
 Python 3.10 or newer is required
 
-No further installation step is needed. The notebooks add the repository root to `sys.path` themselves, so `metrics/metrics_lib/` and `common/` are importable as soon as the repository is checked out, and changes to them take effect immediately.
+No further installation step is required for the analysis notebooks. The notebooks add the repository root to `sys.path` themselves, so `metrics/metrics_lib/` and `common/` are importable as soon as the repository is checked out and changes to them take effect immediately.
+
+Re-generating model outputs additionally requires vLLM and a compatible GPU environment. The generation notebooks contain the corresponding installation commands.
+
 
 
 ## Data Availability

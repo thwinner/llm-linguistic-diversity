@@ -14,8 +14,6 @@ docstring) because its components are normalized across groups.
 - pairwise.distance_matrix() / within_between() expose the per-pair distances
 behind the group scores, for cross-source comparisons (within-source diversity
 vs. distance to a human reference).
-
-Install once (editable), from the repo root: pip install -e .
 """
 from .discourse import discourse_diversity, discourse_diversity_simple
 from .narrative import narrative_diversity, get_sentiment_arc
